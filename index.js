@@ -129,7 +129,10 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
                 const sourceCode = fs.readFileSync(file.path, 'utf8');
                 const obfuscatedCode = obfuscator.obfuscate(sourceCode);
 
-                archive.append(obfuscatedCode, { name: file.originalname });
+                // Preserve folder structure using file's original path
+                const relativePath = path.relative(path.join(__dirname, 'uploads'), file.path);
+                archive.append(obfuscatedCode, { name: relativePath });
+
                 fs.unlinkSync(file.path); // Clean up the uploaded file
             } catch (error) {
                 console.error(`Error processing file ${file.path}:`, error.message);
@@ -150,6 +153,7 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
         res.status(500).json({ error: `Failed to obfuscate files: ${error.message}` });
     }
 });
+
 
 // Health check endpoint
 app.get('/health', (req, res) => {
