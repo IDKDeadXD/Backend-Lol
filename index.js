@@ -111,10 +111,7 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
         return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const archive = archiver('zip', {
-        zlib: { level: 9 }
-    });
-
+    const archive = archiver('zip', { zlib: { level: 9 } });
     res.attachment('obfuscated_scripts.zip');
     archive.pipe(res);
 
@@ -127,28 +124,30 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
 
         // Process files while maintaining directory structure
         for (const file of req.files) {
-            const sourceCode = fs.readFileSync(file.path, 'utf8');
-            const obfuscatedCode = obfuscator.obfuscate(sourceCode);
+            try {
+                console.log(`Processing file: ${file.path}`);
+                const sourceCode = fs.readFileSync(file.path, 'utf8');
+                const obfuscatedCode = obfuscator.obfuscate(sourceCode);
 
-            // Use originalname to maintain the folder structure in the zip
-            archive.append(obfuscatedCode, {
-                name: file.originalname // This preserves the full path
-            });
-
-            // Clean up the uploaded file
-            fs.unlinkSync(file.path);
+                archive.append(obfuscatedCode, { name: file.originalname });
+                fs.unlinkSync(file.path); // Clean up the uploaded file
+            } catch (error) {
+                console.error(`Error processing file ${file.path}:`, error.message);
+            }
         }
 
-        // Clean up the uploads directory after all files are processed
-        const uploadsDir = path.join(__dirname, 'uploads');
-        if (fs.existsSync(uploadsDir)) {
-            fs.rmSync(uploadsDir, { recursive: true, force: true });
-        }
-
-        archive.finalize();
+        archive.finalize().then(() => {
+            const uploadsDir = path.join(__dirname, 'uploads');
+            if (fs.existsSync(uploadsDir)) {
+                console.log('Cleaning up uploads directory...');
+                fs.rmSync(uploadsDir, { recursive: true, force: true });
+            }
+        }).catch((error) => {
+            console.error('Failed to finalize archive:', error);
+        });
     } catch (error) {
         console.error('Obfuscation error:', error);
-        res.status(500).json({ error: 'Failed to obfuscate files' });
+        res.status(500).json({ error: `Failed to obfuscate files: ${error.message}` });
     }
 });
 
