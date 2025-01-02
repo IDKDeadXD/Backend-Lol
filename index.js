@@ -6,7 +6,7 @@ const fs = require('fs');
 const archiver = require('archiver');
 const crypto = require('crypto');
 
-// Quick Obfuscator class definition (remains the same)
+// Quick Obfuscator class definition
 class QuickObfuscator {
     constructor(options = {}) {
         this.options = {
@@ -90,16 +90,12 @@ const app = express();
 // Configure multer to maintain folder structure
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const uploadPath = 'uploads';
-        if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
-        }
+        const uploadPath = path.join('uploads', path.dirname(file.originalname));
+        fs.mkdirSync(uploadPath, { recursive: true });
         cb(null, uploadPath);
     },
     filename: function (req, file, cb) {
-        // Generate a unique filename to prevent conflicts
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+        cb(null, path.basename(file.originalname));
     }
 });
 
@@ -129,17 +125,24 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
             addNoiseVariables: true
         });
 
+        // Process files while maintaining directory structure
         for (const file of req.files) {
             const sourceCode = fs.readFileSync(file.path, 'utf8');
             const obfuscatedCode = obfuscator.obfuscate(sourceCode);
 
-            // Use the original path from the fieldname
+            // Use originalname to maintain the folder structure in the zip
             archive.append(obfuscatedCode, {
-                name: file.originalname
+                name: file.originalname // This preserves the full path
             });
 
             // Clean up the uploaded file
             fs.unlinkSync(file.path);
+        }
+
+        // Clean up the uploads directory after all files are processed
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (fs.existsSync(uploadsDir)) {
+            fs.rmSync(uploadsDir, { recursive: true, force: true });
         }
 
         archive.finalize();
