@@ -122,37 +122,39 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
             addNoiseVariables: true
         });
 
-        // Process files while maintaining directory structure
         for (const file of req.files) {
             try {
-                console.log(`Processing file: ${file.path}`);
+                // Read source file content
                 const sourceCode = fs.readFileSync(file.path, 'utf8');
+
+                // Obfuscate the code
                 const obfuscatedCode = obfuscator.obfuscate(sourceCode);
 
-                // Preserve folder structure using file's original path
-                const relativePath = path.relative(path.join(__dirname, 'uploads'), file.path);
+                // Use the original file path (including folders) for the archive
+                const relativePath = file.originalname; // This includes the folder structure
                 archive.append(obfuscatedCode, { name: relativePath });
 
-                fs.unlinkSync(file.path); // Clean up the uploaded file
+                // Clean up the uploaded file
+                fs.unlinkSync(file.path);
             } catch (error) {
                 console.error(`Error processing file ${file.path}:`, error.message);
             }
         }
 
-        archive.finalize().then(() => {
-            const uploadsDir = path.join(__dirname, 'uploads');
-            if (fs.existsSync(uploadsDir)) {
-                console.log('Cleaning up uploads directory...');
-                fs.rmSync(uploadsDir, { recursive: true, force: true });
-            }
-        }).catch((error) => {
-            console.error('Failed to finalize archive:', error);
-        });
+        // Finalize the archive and send the response
+        await archive.finalize();
+
+        // Clean up the uploads directory
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (fs.existsSync(uploadsDir)) {
+            fs.rmSync(uploadsDir, { recursive: true, force: true });
+        }
     } catch (error) {
         console.error('Obfuscation error:', error);
         res.status(500).json({ error: `Failed to obfuscate files: ${error.message}` });
     }
 });
+
 
 
 // Health check endpoint
