@@ -4,12 +4,11 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
-const JavaScriptObfuscator = require('javascript-obfuscator');
 
 // Express server setup
 const app = express();
 
-// Configure multer to maintain folder structure
+// Configure multer to handle file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadPath = path.join('uploads', path.dirname(file.originalname));
@@ -22,12 +21,42 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
-
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Main endpoint for obfuscating files
+// Simple custom obfuscator
+function customObfuscator(code) {
+    // Example: Basic variable renaming
+    let varCounter = 0;
+    const variableMap = {};
+
+    // Match variable declarations (var, let, const)
+    code = code.replace(/\b(var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (match, type, varName) => {
+        if (!variableMap[varName]) {
+            variableMap[varName] = `v${varCounter++}`;
+        }
+        return `${type} ${variableMap[varName]}`;
+    });
+
+    // Replace variable usage
+    for (const [original, obfuscated] of Object.entries(variableMap)) {
+        const regex = new RegExp(`\\b${original}\\b`, 'g');
+        code = code.replace(regex, obfuscated);
+    }
+
+    // Encode strings (basic hexadecimal encoding)
+    code = code.replace(/(["'`])((?:\\.|[^\1])*?)\1/g, (match, quote, string) => {
+        const encoded = Buffer.from(string).toString('hex');
+        return `${quote}\\x${encoded}${quote}`;
+    });
+
+    // Remove unnecessary whitespace
+    code = code.replace(/\s+/g, ' ').trim();
+
+    return code;
+}
+
+// Main endpoint for obfuscation
 app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ error: 'No files uploaded' });
@@ -43,18 +72,11 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
                 // Read the source file content
                 const sourceCode = fs.readFileSync(file.path, 'utf8');
 
-                // Obfuscate the code using javascript-obfuscator
-                const obfuscatedCode = JavaScriptObfuscator.obfuscate(sourceCode, {
-                    compact: true,
-                    controlFlowFlattening: true,
-                    deadCodeInjection: true,
-                    stringArray: true,
-                    stringArrayEncoding: ['base64'],
-                    stringArrayThreshold: 0.75,
-                }).getObfuscatedCode();
+                // Obfuscate the code using the custom obfuscator
+                const obfuscatedCode = customObfuscator(sourceCode);
 
                 // Use the original file path (including folders) for the archive
-                const relativePath = file.originalname; // This includes the folder structure
+                const relativePath = file.originalname; // Includes folder structure
                 archive.append(obfuscatedCode, { name: relativePath });
 
                 // Clean up the uploaded file
@@ -64,7 +86,7 @@ app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
             }
         }
 
-        // Finalize the archive and send the response
+        // Finalize the archive
         await archive.finalize();
 
         // Clean up the uploads directory
