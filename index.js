@@ -37,11 +37,9 @@ class QuickObfuscator {
     }
 
     renameVariables(code) {
-        // Simple regex to find variable declarations
         const varRegex = /\b(?:let|var|const)\s+([a-zA-Z_$][0-9a-zA-Z_$]*)\b/g;
         let match;
         
-        // First pass: collect and map variable names
         while ((match = varRegex.exec(code)) !== null) {
             const originalName = match[1];
             if (!this.variableMap.has(originalName)) {
@@ -49,7 +47,6 @@ class QuickObfuscator {
             }
         }
 
-        // Second pass: replace all occurrences
         let obfuscatedCode = code;
         this.variableMap.forEach((newName, oldName) => {
             const regex = new RegExp(`\\b${oldName}\\b`, 'g');
@@ -60,9 +57,7 @@ class QuickObfuscator {
     }
 
     encodeStrings(code) {
-        // Replace string literals with encoded versions
         return code.replace(/'([^'\\]|\\.)*'|"([^"\\]|\\.)*"/g, (match) => {
-            // Remove quotes from start and end
             const str = match.slice(1, -1);
             return this.encodeString(str);
         });
@@ -83,7 +78,6 @@ class QuickObfuscator {
             obfuscatedCode = this.addNoiseVariables(obfuscatedCode);
         }
 
-        // Wrap in IIFE to create a new scope
         obfuscatedCode = `(function(){${obfuscatedCode}})();`;
 
         return obfuscatedCode;
@@ -92,49 +86,97 @@ class QuickObfuscator {
 
 // Express server setup
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+
+// Configure multer to maintain folder structure
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        // Store in uploads directory temporarily
+        const uploadPath = 'uploads';
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+        }
+        cb(null, uploadPath);
+    },
+    filename: function (req, file, cb) {
+        // Keep original filename and path info in the file object
+        file.originalRelativePath = file.fieldname;
+        cb(null, file.originalname);
+    }
+});
+
+const upload = multer({ storage });
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Main endpoint for obfuscating files
-app.post('/api/obfuscate-folder', upload.array('files'), async (req, res) => {
-    if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ error: 'No files uploaded' });
-    }
-
-    const archive = archiver('zip', {
-        zlib: { level: 9 }
-    });
-
-    res.attachment('obfuscated_scripts.zip');
-    archive.pipe(res);
-
-    try {
-        const obfuscator = new QuickObfuscator({
-            encodeStrings: true,
-            renameVariables: true,
-            addNoiseVariables: true
-        });
-
-        for (const file of req.files) {
-            const sourceCode = fs.readFileSync(file.path, 'utf8');
-            const obfuscatedCode = obfuscator.obfuscate(sourceCode);
-
-            archive.append(obfuscatedCode, {
-                name: file.originalname
+// Helper function to process uploaded files
+const processUpload = (req) => {
+    // Convert the files object into an array with path information
+    const files = [];
+    if (req.files) {
+        for (let field in req.files) {
+            const file = req.files[field];
+            // The field name contains the full relative path
+            files.push({
+                path: file.path,
+                relativePath: field,
+                originalname: file.originalname
             });
+        }
+    }
+    return files;
+};
 
-            // Clean up the uploaded file
-            fs.unlinkSync(file.path);
+// Main endpoint for obfuscating files
+app.post('/api/obfuscate-folder', (req, res) => {
+    const uploadMiddleware = upload.fields(
+        req.body.paths.map(path => ({ name: path }))
+    );
+
+    uploadMiddleware(req, res, async (err) => {
+        if (err) {
+            return res.status(400).json({ error: 'Upload failed' });
         }
 
-        archive.finalize();
-    } catch (error) {
-        console.error('Obfuscation error:', error);
-        res.status(500).json({ error: 'Failed to obfuscate files' });
-    }
+        const files = processUpload(req);
+        if (files.length === 0) {
+            return res.status(400).json({ error: 'No files uploaded' });
+        }
+
+        const archive = archiver('zip', {
+            zlib: { level: 9 }
+        });
+
+        res.attachment('obfuscated_scripts.zip');
+        archive.pipe(res);
+
+        try {
+            const obfuscator = new QuickObfuscator({
+                encodeStrings: true,
+                renameVariables: true,
+                addNoiseVariables: true
+            });
+
+            for (const file of files) {
+                const sourceCode = fs.readFileSync(file.path, 'utf8');
+                const obfuscatedCode = obfuscator.obfuscate(sourceCode);
+
+                // Add to zip with original relative path
+                archive.append(obfuscatedCode, {
+                    name: file.relativePath
+                });
+
+                // Clean up the uploaded file
+                fs.unlinkSync(file.path);
+            }
+
+            archive.finalize();
+        } catch (error) {
+            console.error('Obfuscation error:', error);
+            res.status(500).json({ error: 'Failed to obfuscate files' });
+        }
+    });
 });
 
 // Health check endpoint
